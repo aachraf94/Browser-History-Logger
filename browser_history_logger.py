@@ -9,6 +9,7 @@ import sqlite3
 import os
 import shutil
 import time
+import subprocess
 from datetime import datetime
 from pathlib import Path
 
@@ -20,6 +21,8 @@ class BrowserHistoryLogger:
         self.last_ids = {}  # Track last seen IDs per browser to avoid duplicates
         print("✓ Browser History Logger initialized")
         print(f"✓ Database: {self.db_name}")
+        print("\n📍 Browser Detection:")
+        self.browser_paths = self.get_browser_paths()  # Store for later use
     
     def setup_database(self):
         """Create SQLite database for storing browsing history"""
@@ -60,25 +63,161 @@ class BrowserHistoryLogger:
         conn.close()
     
     def get_browser_paths(self):
-        """Get paths to browser history files"""
+        """Get paths to browser history files - with improved detection"""
         localappdata = os.environ.get('LOCALAPPDATA', '')
         appdata = os.environ.get('APPDATA', '')
         
-        browsers = {
-            'Chrome': os.path.join(localappdata, 'Google', 'Chrome', 'User Data', 'Default', 'History'),
-            'Edge': os.path.join(localappdata, 'Microsoft', 'Edge', 'User Data', 'Default', 'History'),
-            'Brave': os.path.join(localappdata, 'BraveSoftware', 'Brave-Browser', 'User Data', 'Default', 'History'),
-        }
+        browsers = {}
         
-        # Firefox requires finding the profile folder
+        # Chrome - Search for ALL profiles
+        chrome_base = os.path.join(localappdata, 'Google', 'Chrome', 'User Data')
+        if os.path.exists(chrome_base):
+            chrome_found = False
+            try:
+                for profile_name in os.listdir(chrome_base):
+                    profile_path = os.path.join(chrome_base, profile_name)
+                    if os.path.isdir(profile_path):
+                        history_file = os.path.join(profile_path, 'History')
+                        if os.path.exists(history_file) and os.path.getsize(history_file) > 0:
+                            # Quick check if it has entries
+                            try:
+                                temp_check = history_file + '.check_tmp'
+                                shutil.copy2(history_file, temp_check)
+                                conn_check = sqlite3.connect(temp_check)
+                                cursor_check = conn_check.cursor()
+                                cursor_check.execute('SELECT COUNT(*) FROM urls')
+                                count = cursor_check.fetchone()[0]
+                                conn_check.close()
+                                os.remove(temp_check)
+                                
+                                if count > 0:
+                                    profile_label = f"Chrome-{profile_name}" if profile_name != "Default" else "Chrome"
+                                    browsers[profile_label] = history_file
+                                    print(f"✓ Found {profile_label}: {history_file} ({count} entries)")
+                                    chrome_found = True
+                            except:
+                                pass
+            except Exception as e:
+                print(f"⚠️  Error scanning Chrome profiles: {e}")
+            
+            if not chrome_found:
+                print(f"⚠️  Chrome not found or has no browsing history")
+        else:
+            print(f"⚠️  Chrome not installed")
+        
+        # Edge - Search for ALL profiles
+        edge_base = os.path.join(localappdata, 'Microsoft', 'Edge', 'User Data')
+        if os.path.exists(edge_base):
+            edge_found = False
+            try:
+                for profile_name in os.listdir(edge_base):
+                    profile_path = os.path.join(edge_base, profile_name)
+                    if os.path.isdir(profile_path):
+                        history_file = os.path.join(profile_path, 'History')
+                        if os.path.exists(history_file) and os.path.getsize(history_file) > 0:
+                            try:
+                                temp_check = history_file + '.check_tmp'
+                                shutil.copy2(history_file, temp_check)
+                                conn_check = sqlite3.connect(temp_check)
+                                cursor_check = conn_check.cursor()
+                                cursor_check.execute('SELECT COUNT(*) FROM urls')
+                                count = cursor_check.fetchone()[0]
+                                conn_check.close()
+                                os.remove(temp_check)
+                                
+                                if count > 0:
+                                    profile_label = f"Edge-{profile_name}" if profile_name != "Default" else "Edge"
+                                    browsers[profile_label] = history_file
+                                    print(f"✓ Found {profile_label}: {history_file} ({count} entries)")
+                                    edge_found = True
+                            except:
+                                pass
+            except Exception as e:
+                print(f"⚠️  Error scanning Edge profiles: {e}")
+            
+            if not edge_found:
+                print(f"⚠️  Edge not found or has no browsing history")
+        else:
+            print(f"⚠️  Edge not installed")
+        
+        # Brave - Search for ALL profiles, not just Default
+        brave_base_paths = [
+            os.path.join(localappdata, 'BraveSoftware', 'Brave-Browser', 'User Data'),
+            os.path.join(localappdata, 'Brave Software', 'Brave-Browser', 'User Data'),
+            os.path.join(localappdata, 'BraveSoftware', 'Brave', 'User Data'),
+        ]
+        
+        brave_found = False
+        for brave_base in brave_base_paths:
+            if os.path.exists(brave_base):
+                # Look for all profiles (Default, Profile 1, Profile 2, etc.)
+                try:
+                    for profile_name in os.listdir(brave_base):
+                        profile_path = os.path.join(brave_base, profile_name)
+                        if os.path.isdir(profile_path):
+                            history_file = os.path.join(profile_path, 'History')
+                            if os.path.exists(history_file):
+                                # Check if this history file has data
+                                file_size = os.path.getsize(history_file)
+                                if file_size > 0:
+                                    # Quick check if it has entries
+                                    try:
+                                        temp_check = history_file + '.check_tmp'
+                                        shutil.copy2(history_file, temp_check)
+                                        conn_check = sqlite3.connect(temp_check)
+                                        cursor_check = conn_check.cursor()
+                                        cursor_check.execute('SELECT COUNT(*) FROM urls')
+                                        count = cursor_check.fetchone()[0]
+                                        conn_check.close()
+                                        os.remove(temp_check)
+                                        
+                                        if count > 0:
+                                            profile_label = f"Brave-{profile_name}" if profile_name != "Default" else "Brave"
+                                            browsers[profile_label] = history_file
+                                            print(f"✓ Found {profile_label}: {history_file} ({count} entries)")
+                                            brave_found = True
+                                    except:
+                                        pass
+                except Exception as e:
+                    print(f"⚠️  Error scanning Brave profiles: {e}")
+                
+                if brave_found:
+                    break
+        
+        if not brave_found:
+            print(f"⚠️  Brave not found or has no browsing history")
+        
+        # Vivaldi - Another Chromium-based browser
+        vivaldi_path = os.path.join(localappdata, 'Vivaldi', 'User Data', 'Default', 'History')
+        if os.path.exists(vivaldi_path):
+            browsers['Vivaldi'] = vivaldi_path
+            print(f"✓ Found Vivaldi: {vivaldi_path}")
+        
+        # Firefox - Find profile dynamically
         firefox_base = os.path.join(appdata, 'Mozilla', 'Firefox', 'Profiles')
+        firefox_found = False
+        
         if os.path.exists(firefox_base):
-            for profile in os.listdir(firefox_base):
-                if 'default' in profile.lower():
-                    firefox_path = os.path.join(firefox_base, profile, 'places.sqlite')
-                    if os.path.exists(firefox_path):
-                        browsers['Firefox'] = firefox_path
-                        break
+            try:
+                profiles = os.listdir(firefox_base)
+                # Look for default profile
+                for profile in profiles:
+                    profile_path = os.path.join(firefox_base, profile)
+                    if os.path.isdir(profile_path):
+                        places_db = os.path.join(profile_path, 'places.sqlite')
+                        if os.path.exists(places_db):
+                            browsers['Firefox'] = places_db
+                            print(f"✓ Found Firefox: {places_db}")
+                            firefox_found = True
+                            break
+            except Exception as e:
+                print(f"⚠️  Error scanning Firefox profiles: {e}")
+        
+        if not firefox_found:
+            print(f"⚠️  Firefox not found")
+        
+        if not browsers:
+            print("⚠️  WARNING: No browsers detected! Check if they are installed and paths are accessible.")
         
         return browsers
     
@@ -112,11 +251,18 @@ class BrowserHistoryLogger:
     def read_chromium_history(self, history_path, browser_name):
         """Read history from Chromium-based browsers (Chrome, Edge, Brave)"""
         if not os.path.exists(history_path):
+            print(f"⚠️  {browser_name} history file does not exist: {history_path}")
+            return []
+        
+        # Check file size to verify it has data
+        file_size = os.path.getsize(history_path)
+        if file_size == 0:
+            print(f"⚠️  {browser_name} history file is empty (0 bytes)")
             return []
         
         temp_path = self.copy_locked_file(history_path)
         if not temp_path:
-            print(f"⚠️ Could not access {browser_name} history (browser may be open)")
+            print(f"⚠️  Could not copy {browser_name} history (browser may be open and file locked)")
             return []
         
         entries = []
@@ -124,8 +270,22 @@ class BrowserHistoryLogger:
             conn = sqlite3.connect(temp_path)
             cursor = conn.cursor()
             
+            # First, check total entries in database
+            cursor.execute('SELECT COUNT(*) FROM urls')
+            total_in_db = cursor.fetchone()[0]
+            
             # Get last ID we processed for this browser
             last_id = self.last_ids.get(browser_name, 0)
+            
+            # Debug info
+            if total_in_db == 0:
+                print(f"⚠️  {browser_name} database has no entries in 'urls' table")
+                conn.close()
+                try:
+                    os.remove(temp_path)
+                except:
+                    pass
+                return []
             
             # Chromium stores time as microseconds since 1601-01-01
             cursor.execute('''
@@ -135,7 +295,9 @@ class BrowserHistoryLogger:
                 ORDER BY id
             ''', (last_id,))
             
-            for row in cursor.fetchall():
+            rows = cursor.fetchall()
+            
+            for row in rows:
                 row_id, url, title, visit_count, last_visit_time = row
                 
                 # Convert Chrome timestamp (microseconds since 1601-01-01) to datetime
@@ -162,6 +324,8 @@ class BrowserHistoryLogger:
             conn.close()
         except Exception as e:
             print(f"✗ Error reading {browser_name} history: {e}")
+            import traceback
+            traceback.print_exc()
         finally:
             # Clean up temp file
             try:
@@ -277,11 +441,17 @@ class BrowserHistoryLogger:
         """Collect history from all browsers"""
         print(f"\n[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Collecting browser histories...")
         
-        browser_paths = self.get_browser_paths()
+        # Use cached browser paths from initialization
+        if not hasattr(self, 'browser_paths') or not self.browser_paths:
+            self.browser_paths = self.get_browser_paths()
+        
         total_new = 0
         
-        for browser_name, history_path in browser_paths.items():
+        for browser_name, history_path in self.browser_paths.items():
             try:
+                # Show what we're checking
+                last_id = self.last_ids.get(browser_name, 0)
+                
                 if browser_name == 'Firefox':
                     entries = self.read_firefox_history(history_path)
                 else:
@@ -291,14 +461,19 @@ class BrowserHistoryLogger:
                     saved = self.save_entries(entries)
                     total_new += saved
                     if saved > 0:
-                        print(f"✓ {browser_name}: {saved} new entries")
+                        print(f"✓ {browser_name}: {saved} new entries (last ID: {self.last_ids.get(browser_name, 0)})")
                     else:
-                        print(f"  {browser_name}: No new entries")
+                        print(f"  {browser_name}: {len(entries)} entries found but already in database")
                 else:
-                    print(f"  {browser_name}: No history found")
+                    if last_id > 0:
+                        print(f"  {browser_name}: No new entries since last check (last ID: {last_id})")
+                    else:
+                        print(f"  {browser_name}: No history found or unable to read")
                     
             except Exception as e:
                 print(f"✗ Error processing {browser_name}: {e}")
+                import traceback
+                traceback.print_exc()
         
         if total_new > 0:
             print(f"✓ Total new entries saved: {total_new}")
@@ -312,7 +487,8 @@ class BrowserHistoryLogger:
         print("=" * 80)
         print("🕵️  Browser History Logger - Non-Intrusive Monitoring")
         print("=" * 80)
-        print(f"\n✓ Monitoring browsers: Chrome, Edge, Brave, Firefox")
+        detected_browsers = ', '.join(self.browser_paths.keys()) if self.browser_paths else "None detected"
+        print(f"\n✓ Detected browsers: {detected_browsers}")
         print(f"✓ Check interval: {interval_seconds} seconds ({interval_seconds//60} minutes)")
         print(f"✓ Database: {self.db_name}")
         print(f"✓ No proxy required - Direct history access")
